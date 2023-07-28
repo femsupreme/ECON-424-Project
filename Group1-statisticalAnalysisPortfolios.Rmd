@@ -1,0 +1,1093 @@
+---
+title: "Statistical Analysis of Porfolios"
+author: "Econ 424"
+date: "July 2023"
+output: slidy_presentation
+---
+
+## Instructions
+Please read Zivot Ch.15.  Below are sample codes to carry out the analyses mentioned in the chapter.
+
+Your task is to:
+
+1. Motivate (why we care) and illustrate (how it's done) the impact of statistical or estimation uncertainties in model parameters on the portfolio analysis results.
+
+2. Carry out the analyses on the dataset you used for HW4/HW5 by applying the above sample codes below.
+
+Please note that the bootstrap procedure will be explained by Group 2 (who will go first, so you only need to briefly describe what's being done and focus on the results instead.)
+
+3. Discuss your findings.  
+
+- Specifically, address how estimation errors in the GWN model parameters affect the efficient portfolios we obtain. e.g. how are the means, standard deviations, correlations, and furthermore, weights on the global minimum variance portfolio, Sharpe ratios, tangency portfolios affected?
+
+- As such, what are some implications?  (e.g. should one be more confident about efficient portfolios with targeted means or S.D? other thoughts?  how about changing sample periods, how robust are your conclusions?)
+
+
+## Set options and load packages
+
+```{r warning=FALSE,message=FALSE}
+options(digits=3, width=70)
+library(ellipse)
+library(IntroCompFinR)
+library(mvtnorm)
+library(PerformanceAnalytics)
+library(zoo)
+library(corrplot)
+Sys.setenv(TZ="UTC")
+cex.val = 2
+```
+
+## Two Asset Example
+
+Use two asset example data from Introduction to Portfolio Theory chapter re-scaled for monthly time horizon:
+
+```{r}
+mu.A = 0.175/12
+sig.A = 0.258/sqrt(12)
+sig2.A = sig.A^2
+mu.B = 0.055/12
+sig.B = 0.115/sqrt(12)
+sig2.B = sig.B^2
+rho.AB = -0.164
+sig.AB = rho.AB*sig.A*sig.B
+sigma.mat = matrix(c(sig2.A, sig.AB, sig.AB, sig2.B), 2, 2, byrow=TRUE) 
+mu.vec = c(mu.A, mu.B) 
+sd.vec = c(sig.A, sig.B) 
+names(mu.vec) = names(sd.vec) = c("asset.A", "asset.B") 
+dimnames(sigma.mat) = list(names(mu.vec), names(mu.vec))
+```
+
+```{r}
+mu.vec
+sd.vec
+sig.AB
+```
+
+Consider an equally weighted portfolio of assets A and B. The GWN model parameters for this portfolio are:
+
+```{r}
+x1.A = 0.5 
+x1.B = 1 - x1.A 
+x1.vec = c(x1.A, x1.B) 
+names(x1.vec) = names(mu.vec)
+mu.p1 = x1.A*mu.A + x1.B*mu.B 
+sig2.p1 = x1.A^2 * sig2.A + x1.B^2 * sig2.B + 2*x1.A*x1.B*sig.AB 
+sig.p1 = sqrt(sig2.p1)
+cbind(mu.p1, sig2.p1, sig.p1)
+```
+
+## Risk-return trade offs for example data
+
+```{r}
+plot(sd.vec, mu.vec, pch=16, col="black", 
+     ylim=c(0, 0.02), xlim=c(0, 0.1),
+     xlab=expression(sigma[p]), ylab=expression(mu[p]),
+     cex=2, cex.lab = 1.5)
+abline(h=0)
+points(sig.p1, mu.p1, pch=16, col="black", cex=2)
+text(x=sig.A, y=mu.A, labels="A", pos=4, cex = 1.5)
+text(x=sig.B, y=mu.B, labels="B", pos=4, cex = 1.5)
+text(x=sig.p1, y=mu.p1, labels="P", pos=4, cex = 1.5)
+```
+
+
+## Simulate hypothetical returns from GWN model
+
+We use the above GWN model parameters to simulate $T = 60$ hypothetical returns for assets A and B and the equally weighted portfolio:
+
+```{r}
+library(mvtnorm)
+n.obs = 60 
+set.seed(125) 
+returns.sim = rmvnorm(n.obs, mean=mu.vec, sigma=sigma.mat) 
+colnames(returns.sim) = names(mu.vec)
+rp1.sim = returns.sim%*%x1.vec
+```
+
+## GWN model estimates on simulated data
+
+The estimates of the GWN model parameters from the simulated returns for the individual assets are:
+
+```{r}
+muhat.vals = colMeans(returns.sim) 
+sig2hat.vals = apply(returns.sim, 2, var) 
+sigmahat.vals = apply(returns.sim, 2, sd) 
+covmat.hat = cov(returns.sim) 
+covhat = covmat.hat[1,2]
+corhat = covhat/(prod(sigmahat.vals))
+rbind(muhat.vals, sig2hat.vals, sigmahat.vals)
+c(covhat, corhat)
+```
+
+The estimated standard errors and 95% confidence intervals are:
+
+```{r}
+# estimated standard errors
+se.muhat = sigmahat.vals/sqrt(n.obs) 
+se.sigmahat = sigmahat.vals/sqrt(2*n.obs) 
+rbind(se.muhat, se.sigmahat)
+# 95% confidence intervals 
+lower.mu = muhat.vals - 2*se.muhat 
+upper.mu = muhat.vals + 2*se.muhat 
+lower.sigma = sigmahat.vals - 2*se.sigmahat 
+upper.sigma = sigmahat.vals + 2*se.sigmahat 
+cbind(lower.mu, upper.mu) 
+cbind(lower.sigma, upper.sigma)
+```
+
+* The means are not estimated as precisely as the volatilities
+* All of the true values for $\mu$ and $\sigma$ are contained in the 95% confidence intervals.
+
+## GWN model estimates for equally weighted portfolio
+
+For the equally weighted portfolio, the GWN model estimates computed directly from the simulated portfolio returns are:
+
+```{r}
+muhat.p1 = mean(rp1.sim) 
+sig2hat.p1 = as.numeric(var(rp1.sim)) 
+sigmahat.p1 = sd(rp1.sim) 
+cbind(muhat.p1, sig2hat.p1, sigmahat.p1)
+```
+
+The portfolio estimates computed from the asset estimates give the same results:
+
+```{r}
+muhat.p1 = as.numeric(x1.A*muhat.vals[1] + x1.B*muhat.vals[2]) 
+sig2hat.p1 = as.numeric(x1.A^2 * sig2hat.vals[1] + x1.B^2 * sig2hat.vals[2] + 2*x1.A*x1.B*covhat) 
+sighat.p1 = sqrt(sig2hat.p1) 
+cbind(muhat.p1, sig2hat.p1, sigmahat.p1)
+```
+
+The estimated standard errors and 95% confidence intervals are:
+
+```{r}
+# estimated standard errors
+se.muhat.p1 = sigmahat.p1/sqrt(n.obs) 
+se.sigmahat.p1 = sigmahat.p1/sqrt(2*n.obs) 
+cbind(se.muhat.p1, se.sigmahat.p1)
+# 95% confidence intervals 
+lower.mu = muhat.p1 - 2*se.muhat.p1 
+upper.mu = muhat.p1 + 2*se.muhat.p1 
+lower.sigma = sigmahat.p1 - 2*se.sigmahat.p1 
+upper.sigma = sigmahat.p1 + 2*se.sigmahat.p1 
+ans = rbind(c(lower.mu, upper.mu),             
+c(lower.sigma, upper.sigma)) 
+colnames(ans) = c("lower", "upper") 
+rownames(ans) = c("mu.p", "sigma.p") 
+ans
+```
+
+* As with the individual assets, the portfolio mean is estimated less precisely than the portfolio volatility and the true values are in the 95% confidence intervals.
+
+## True and estimated risk-return tradeoffs
+
+```{r}
+plot(sd.vec, mu.vec, pch=16, col="black",       
+     ylim=c(-0.01, 0.04), xlim=c(0, 0.1),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p]),      
+     cex=2) 
+abline(h=0) 
+points(sig.p1, mu.p1, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=4, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=4, cex = 1.5) 
+text(x=sig.p1, y=mu.p1, labels="P", pos=4, cex = 1.5) 
+# estimates 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+points(sigmahat.p1, muhat.p1, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+     col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.p1, y=muhat.p1, labels="P Hat",       
+     col="blue", pos=4, cex = 1.5)
+```
+
+* B and B Hat are close, B Hat is slightly below B
+* P and P Hat are moderately close, P Hat is above P
+* A and A Hat are not close, A Hat is high above A
+
+## True and estimated risk-return tradeoffs with 95% confidence ellipses
+
+```{r}
+library(ellipse)
+plot(sd.vec, mu.vec, pch=16, col="black",       
+     ylim=c(-0.01, 0.06), xlim=c(0, 0.1),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p]),cex=2) 
+abline(h=0) 
+points(sig.p1, mu.p1, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=4, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=4, cex = 1.5) 
+text(x=sig.p1, y=mu.p1, labels="P", pos=4, cex = 1.5) 
+# estimates points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+points(sigmahat.p1, muhat.p1, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+   col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.p1, y=muhat.p1, labels="P Hat",       
+     col="blue", pos=4, cex = 1.5)
+# Create asymptotic variances 
+V.A = matrix(c(se.sigmahat[1]^2, 0 ,0, se.muhat[1]^2), 2, 2, byrow=TRUE) 
+V.B = matrix(c(se.sigmahat[2]^2, 0 ,0, se.muhat[2]^2), 2, 2, byrow=TRUE) 
+V.P = matrix(c(se.sigmahat.p1^2, 0 ,0, se.muhat.p1^2), 2, 2, byrow=TRUE)
+# plot confidence ellipses 
+lines(ellipse(V.A, centre=c(sigmahat.vals[1], muhat.vals[1]), level=0.95),         
+      col="red" , lwd=2) 
+lines(ellipse(V.B, centre=c(sigmahat.vals[2], muhat.vals[2]), level=0.95),         
+      col="red", lwd=2 ) 
+lines(ellipse(V.P, centre=c(sigmahat.p1, muhat.p1), level=0.95),         
+      col="red", lwd=2 )
+```
+
+* The `ellipse()` function from the R package **ellipse** is used to draw the 95% confidence sets
+* The confidence ellipses are longer in the $\mu$ direction
+* The confidence ellipse for $(\sigma_{A}, \mu_{A})$ is much bigger than the other ellipses
+
+## True and estimated risk-return tradeoffs with bootstrap estimates
+
+The following R code creates $B = 500$ bootstrap estimates of $(\sigma_{i},\mu_{i})$ for $i = A,B,P$:
+
+```{r}
+n.boot = 500 
+mu.boot = matrix(0, n.boot, 3) 
+sd.boot = matrix(0, n.boot, 3) 
+colnames(mu.boot) = colnames(sd.boot) = c("A", "B", "P")
+set.seed(123) 
+for (i in 1:n.boot) {   
+   boot.idx = sample(n.obs, replace=TRUE)   
+   ret.boot = returns.sim[boot.idx, ]    
+   rp1.boot = ret.boot%*%x1.vec   
+   ret.boot = cbind(ret.boot, rp1.boot)   
+   mu.boot[i, ] = colMeans(ret.boot)   
+   sd.boot[i, ] = apply(ret.boot, 2, sd)  
+}
+```
+
+## True and estimated risk-return tradeoffs with bootstrap estimates 
+
+```{r}
+# show estimates with 95% confidence intervals 
+plot(sd.vec, mu.vec, type="n",  ylim=c(-0.01, 0.06), xlim=c(0, 0.1),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p])) 
+# bootstrap estimates 
+points(sd.boot[, "A"], mu.boot[, "A"], pch=16, col="lightblue") 
+points(sd.boot[, "B"], mu.boot[, "B"], pch=16, col="grey") 
+points(sd.boot[, "P"], mu.boot[, "P"], pch=16, col="pink") 
+# true values points(sd.vec, mu.vec, pch=16, col="black", cex=2) 
+abline(h=0) 
+points(sig.p1, mu.p1, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=4, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=4, cex = 1.5) 
+text(x=sig.p1, y=mu.p1, labels="P", pos=4, cex = 1.5) 
+# estimates points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+points(sigmahat.p1, muhat.p1, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+    col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+    col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.p1, y=muhat.p1, labels="P Hat",       
+     col="blue", pos=4, cex = 1.5) 
+# plot confidence ellipses 
+lines( ellipse(V.A, centre=c(sigmahat.vals[1], muhat.vals[1]), level=0.95),         
+      col="red" , lwd=2) 
+lines( ellipse(V.B, centre=c(sigmahat.vals[2], muhat.vals[2]), level=0.95),         
+      col="red", lwd=2 ) 
+lines( ellipse(V.P, centre=c(sigmahat.p1, muhat.p1), level=0.95),         
+     col="red", lwd=2 ) 
+```
+
+## True and estimated portfolio frontier
+
+Here, we create the true and estimated portfolio frontiers for the following portfolios:
+
+```{r}
+x.A = seq(from=-0.4, to=1.4, by=0.1) 
+x.B = 1 - x.A
+```
+
+The risk-return characteristics of the portfolios on the true portfolio frontier are:
+
+```{r}
+mu.p = x.A*mu.A + x.B*mu.B 
+sig2.p = x.A^2 * sig2.A + x.B^2 * sig2.B + 2*x.A*x.B*sig.AB 
+sig.p = sqrt(sig2.p)
+```
+
+The risk-return characteristics of the portfolios on the estimated frontier are:
+
+```{r}
+muhat.p = x.A*muhat.vals["asset.A"] + x.B*muhat.vals["asset.B"] 
+sig2hat.p = x.A^2 * sig2hat.vals["asset.A"] + x.B^2 * sig2hat.vals["asset.B"] + 2*x.A*x.B*covhat 
+sighat.p = sqrt(sig2hat.p)
+```
+
+## True and estimated portfolio frontier
+
+```{r}
+plot(sig.p, mu.p, pch=16, type="b", col="black",       
+     ylim=c(-0.01, 0.041), xlim=c(0, 0.125),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p]), cex=1) 
+abline(h=0) 
+points(sd.vec, mu.vec, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=3, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=3, cex = 1.5) 
+# estimated assets and frontier 
+points(sighat.p, muhat.p, type="b", pch=16, col="blue", cex=1) 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+     col="blue", pos=3, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=2, cex = 1.5)
+```
+
+* Due to the large estimation error in $\hat{\mu}_{A}$, the estimated frontier is considerably higher than the true frontier. 
+* As a result, portfolios on the estimated frontier appear to have higher reward-to-risk properties than they actually do.
+
+## True and estimated portfolio frontier with bootstrap estimates
+
+* Sampling uncertainty about the estimated frontier can be easily computed using the bootstrap. 
+* The process is the same as in the case of a single asset. 
+* For each bootstrap sample, estimate the expected return and volatility of each portfolio on the frontier and then plot these bootstrap pairs on the plot showing the estimated frontier from the sample returns.
+
+```{r}
+# initialize matrices 
+n.boot = 1000 
+mu.boot = matrix(0, n.boot, length(x.A)) 
+sd.boot = matrix(0, n.boot, length(x.A)) 
+colnames(mu.boot) = colnames(sd.boot) = paste("P", 1:length(x.A), sep=".") 
+# bootstrap loop 
+set.seed(123) 
+for (i in 1:n.boot) {   
+   boot.idx = sample(n.obs, replace=TRUE)   
+   ret.boot = returns.sim[boot.idx, ]    
+# GWN model estimates   
+   muhat.boot = colMeans(ret.boot)   
+   sig2hat.boot = apply(ret.boot, 2, var)   
+   sigmahat.boot = sqrt(sig2hat.boot)   
+   covhat.boot = cov(ret.boot)[1,2]   
+# portfolio risk return estimates   
+   mu.boot[i, ] = x.A*muhat.boot[1] + x.B*muhat.boot[2]   
+   sig2.boot = x.A^2 * sig2hat.boot[1] + x.B^2 * sig2hat.boot[2] + 2*x.A*x.B*covhat.boot   
+   sd.boot[i, ] = sqrt(sig2.boot) 
+}
+```
+
+## True and estimated portfolio frontier with bootstrap estimates
+
+```{r}
+# set up plot area
+plot(sig.p, mu.p, type="n", ylim=c(-0.02, 0.07), xlim=c(0, 0.13),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p])) 
+# plot bootstrap estimates 
+for (i in 1:length(x.A)) {   
+   points(sd.boot[, i], mu.boot[, i], pch=16, col="lightblue") 
+}
+# plot true frontier
+points(sig.p, mu.p, pch=16, type="b", col="black", cex=1) 
+abline(h=0) 
+# plot true assets
+points(sd.vec, mu.vec, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=3, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=3, cex = 1.5) 
+# plot estimated frontier 
+points(sighat.p, muhat.p, type="b", pch=16, col="blue", cex=1) 
+# plot estimated assets
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+     col="blue", pos=3, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=2, cex = 1.5)
+```
+
+* The true frontier portfolios are the black dots, the estimated frontier portfolios are the dark blue dots and the bootstrap risk-return pairs are the light blue dots. 
+* The bootstrap estimates form a light blue cloud around the estimated frontier. 
+* The bootstrap cloud can be interpreted as approximating a confidence interval around estimated frontier.  
+
+## True and estimated global minimum variance portfolio 
+
+The true and estimated global minimum variance portfolio are:
+
+```{r}
+# True global min variance portfolio weights
+xA.min = (sig2.B - sig.AB)/(sig2.A + sig2.B - 2*sig.AB) 
+xB.min = 1 - xA.min 
+c(xA.min, xB.min)
+# Estimated min variance portfolio weights
+xA.min.hat = (sig2hat.vals[2] - covhat)/(sig2hat.vals[1] + sig2hat.vals[2] - 2*covhat) 
+xB.min.hat = 1 - xA.min.hat 
+c(xA.min.hat, xB.min.hat)
+```
+
+The true and estimated expected return and volatility of the global minimum variance portfolio are:
+
+```{r}
+# Expected return and volatility of true global minimum variance portfolio 
+mu.p.min = xA.min*mu.A + xB.min*mu.B 
+sig2.p.min = xA.min^2 * sig2.A + xB.min^2 * sig2.B + 2*xA.min*xB.min*sig.AB 
+sig.p.min = sqrt(sig2.p.min) 
+c(mu.p.min, sig.p.min)
+# Expected return and volatility of estimated global minimum variance portfolio 
+mu.p.min.hat = as.numeric(xA.min.hat*muhat.vals[1] + xB.min.hat*muhat.vals[2]) 
+sig2.p.min.hat = xA.min.hat^2 * sig2hat.vals[1] + xB.min.hat^2 * sig2hat.vals[2] + 2*xA.min.hat*xB.min.hat*covhat 
+sig.p.min.hat = as.numeric(sqrt(sig2.p.min.hat)) 
+c(mu.p.min.hat, sig.p.min.hat)
+```
+
+## True and estimated global minimum variance portfolio 
+
+```{r, echo=FALSE}
+plot(sig.p, mu.p, pch=16, type="b", col="black",       
+ylim=c(-0.01, 0.041), xlim=c(0, 0.125),      
+xlab=expression(sigma[p]), ylab=expression(mu[p]), cex=1) 
+abline(h=0) 
+points(sd.vec, mu.vec, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=3, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=3, cex = 1.5) 
+# estimated assets and frontier 
+points(sighat.p, muhat.p, type="b", pch=16, col="blue", cex=1) 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+col="blue", pos=3, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+col="blue", pos=1, cex = 1.5) 
+# true min variance portfolio 
+points(sig.p.min, mu.p.min, pch=16, col="green", cex=2) 
+text(x=sig.p.min, y=mu.p.min, labels="GMIN", col="green", pos=2, cex=1.5) 
+# estimated min variance portfolio 
+points(sig.p.min.hat, mu.p.min.hat, pch=16, col="orange", cex=2) 
+text(x=sig.p.min.hat, y=mu.p.min.hat, labels="GMIN Hat", col="orange", pos=2, cex=1.5) 
+```
+
+## Bootstrapping the global minimum variance portfolio estimates
+
+To compute $B = 1000$ bootstrap estimates of the global minimum variance portfolio parameters use:
+
+```{r}
+# initialize matrices 
+n.boot = 1000 
+weights.boot = matrix(0, n.boot, 2) 
+stats.boot = matrix(0, n.boot, 2) 
+colnames(weights.boot) = names(mu.vec)  
+colnames(stats.boot) = c("mu", "sigma") 
+# bootstrap loop 
+set.seed(123) 
+for (i in 1:n.boot) {   
+   boot.idx = sample(n.obs, replace=TRUE)   
+   ret.boot = returns.sim[boot.idx, ]    
+# GWN model estimates   
+   muhat.boot = colMeans(ret.boot)   
+   sig2hat.boot = apply(ret.boot, 2, var)   
+   sigmahat.boot = sqrt(sig2hat.boot)   
+   covhat.boot = cov(ret.boot)[1,2]   
+# global minimum variance portfolio weights   
+   weights.boot[i, 1] = (sig2hat.boot[2] - covhat.boot)/(sig2hat.boot[1] + sig2hat.boot[2] - 2*covhat.boot)   
+   weights.boot[i, 2] = 1 - weights.boot[i, 1]   
+# portfolio risk return estimates   
+   stats.boot[i, "mu"] = weights.boot[i, 1]*muhat.boot[1] + weights.boot[i, 2]*muhat.boot[2]   
+   sig2.boot = (weights.boot[i, 1]^2 * sig2hat.boot[1] + weights.boot[i, 2]^2 * sig2hat.boot[2]                 
+                + 2*weights.boot[i, 1]*weights.boot[i, 2]*covhat.boot)   
+   stats.boot[i, "sigma"] = sqrt(sig2.boot) 
+}
+```
+
+## Statistical properties of estimated global minimum variance portfolio weights
+
+The bootstrap bias estimates for the global minimum variance portfolio weights are:
+
+```{r}
+colMeans(weights.boot) - c(xA.min.hat, xB.min.hat)
+```
+
+* These values are close to zero suggesting that the estimated weights are unbiased. 
+
+The bootstrap standard error estimates for the weights are:
+
+```{r}
+apply(weights.boot, 2, sd)
+```
+
+* The standard errors estimates are identical and close to 0.05 which is not too large.
+
+## bootstrap distribution of global minimum variance weights
+
+```{r}
+par(mfrow=c(2,2))   
+   hist(weights.boot[, 1], main="Asset A", xlab="Asset A weights", col="slateblue1")   
+   abline(v=xA.min.hat, col="white", lwd=2) 
+   hist(weights.boot[, 2], main="Asset B", xlab="Asset B weights", col="slateblue1")   
+   abline(v=xB.min.hat, col="white", lwd=2)
+   qqnorm(weights.boot[, 1])   
+   qqline(weights.boot[, 1])   
+   qqnorm(weights.boot[, 2])   
+   qqline(weights.boot[, 2]) 
+par(mfrow=c(1,1))
+```
+
+* These distributions are centered at the sample estimates (white vertical lines) and look slightly asymmetric
+
+## Statistical properties of estimated global minimum variance portfolio mean and volatility
+
+The bootstrap estimates of bias for the estimated expected return and volatility of the global minimum variance portfolio are:
+
+```{r}
+colMeans(stats.boot) - c(mu.p.min.hat, sig.p.min.hat)
+```
+
+* These small values indicate that the estimates are roughly unbiased. 
+
+The bootstrap standard error estimates are:
+
+```{r}
+apply(stats.boot, 2, sd)
+```
+
+* Here, the bootstrap standard error estimate for $\hat{\mu}_{p,\mathrm{min}}$ is larger than the estimate for $\hat{\sigma}_{p,\mathrm{min}}$ indicating more uncertainty about the mean of the global minimum variance portfolio than the volatility of the portfolio.
+  
+## bootstrap distribution of global minimum variance weights
+
+```{r}
+par(mfrow=c(2,2))   
+   hist(stats.boot[, 1], main="mu", xlab="bootstrap estimates of mu", col="slateblue1")   
+   abline(v=mu.p.min.hat, col="white", lwd=2)   
+   hist(stats.boot[, 2], main="sigma", xlab="bootstrap estimates of sigma", col="slateblue1")   
+   abline(v=sig.p.min.hat, col="white", lwd=2)   
+   qqnorm(stats.boot[, "mu"])   
+   qqline(stats.boot[, "mu"])   
+   qqnorm(stats.boot[, "sigma"])   
+   qqline(stats.boot[, "sigma"]) 
+par(mfrow=c(1,1))
+```
+
+## Bootstrapping the global minimum variance portfolio estimates
+
+```{r, echo=FALSE}
+plot(sig.p, mu.p, pch=16, type="n", ylim=c(-0.01, 0.041), xlim=c(0, 0.125),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p])) 
+# bootstrap estimates 
+points(stats.boot[, "sigma"], stats.boot[, "mu"], pch=16, col="lightgoldenrod2") 
+# true frontier 
+points(sig.p, mu.p, pch=16, type="b", col="black", cex=1) 
+abline(h=0) 
+points(sd.vec, mu.vec, pch=16, col="black", cex=2) 
+text(x=sig.A, y=mu.A, labels="A", pos=3, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=3, cex = 1.5) 
+# estimated assets and frontier 
+points(sighat.p, muhat.p, type="b", pch=16, col="blue", cex=1) 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+     col="blue", pos=3, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=1, cex = 1.5) 
+# true min variance portfolio 
+points(sig.p.min, mu.p.min, pch=16, col="green", cex=2) 
+text(x=sig.p.min, y=mu.p.min, labels="GMIN", col="green", pos=2, cex=1.5) 
+# estimated min variance portfolio 
+points(sig.p.min.hat, mu.p.min.hat, pch=16, col="orange", cex=2) 
+text(x=sig.p.min.hat, y=mu.p.min.hat, labels="GMIN Hat", col="orange", pos=2, cex=1.5) 
+```
+
+To sum up:
+* For the global minimum variance portfolio we have roughly unbiased estimates of the weights, expected return and variance. 
+* We have a fairly precise estimate of volatility but an imprecise estimate of expected return.
+
+## True and estimated Sharpe ratios
+
+For the example data, assume a monthly risk-free rate of $r_{f}=0.03/12=0.0025$. The true Sharpe ratios are:
+```{r}
+r.f = 0.03/12
+SR.true = (mu.vec - r.f)/sd.vec 
+SR.true
+```
+
+* Here, asset A has a much higher Sharpe ratio than asset B.
+
+For the simulated data, the estimated Sharpe ratios are:
+
+```{r}
+SR.hat = (muhat.vals - r.f)/sigmahat.vals 
+SR.hat
+```
+
+* For both assets the estimated Sharpe ratios are quite different from the true Sharpe ratios and are highly misleading.
+
+## True and estimated Sharpe ratios
+
+```{r}
+plot(sd.vec, mu.vec, pch=16, col="black",       
+     ylim=c(-0.01, 0.04), xlim=c(0, 0.1),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p]), cex=2) 
+abline(h=0) 
+points(0, r.f, pch=16, col="green", cex=2) 
+text(0, r.f, labels=expression(r[f]), cex=1.5, pos=2) 
+abline(a=r.f, b=SR.true[1], col="black") 
+abline(a=r.f, b=SR.true[2], col="black")
+text(x=sig.A, y=mu.A, labels="A", pos=4, cex = 1.5) 
+text(x=sig.B, y=mu.B, labels="B", pos=4, cex = 1.5) 
+# estimates 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+col="blue", pos=4, cex = 1.5) 
+abline(a=r.f, b=SR.hat[1], col="blue") 
+abline(a=r.f, b=SR.hat[2], col="blue")
+```
+
+* True Sharpe ratios are black lines
+* Estimated Sharpe ratios are blue lines
+
+## Bootstrap estimates of Sharpe Ratios
+
+```{r}
+n.boot = 500 
+mu.boot = matrix(0, n.boot, 2) 
+sd.boot = matrix(0, n.boot, 2) 
+SR.boot = matrix(0, n.boot, 2) 
+colnames(mu.boot) = colnames(sd.boot) = colnames(SR.boot) = c("A", "B")
+set.seed(123) 
+for (i in 1:n.boot) {   
+   boot.idx = sample(n.obs, replace=TRUE)   
+   ret.boot = returns.sim[boot.idx, ]    
+   mu.boot[i, ] = colMeans(ret.boot)   
+   sd.boot[i, ] = apply(ret.boot, 2, sd)    
+   SR.boot[i, ] = (mu.boot[i, ] - r.f)/sd.boot[i, ] 
+} 
+# find index of max and min bootstrap Sharpe ratios
+maxSRidx.A = which(SR.boot[, 1] == max(SR.boot[, 1])) 
+minSRidx.A = which(SR.boot[, 1] == min(SR.boot[, 1])) 
+maxSRidx.B = which(SR.boot[, 2] == max(SR.boot[, 2])) 
+minSRidx.B = which(SR.boot[, 2] == min(SR.boot[, 2]))
+```
+
+## Bootstrap estimates of Sharpe Ratios
+
+```{r, echo=FALSE}
+# layout plot
+plot(sd.vec, mu.vec, type="n",  ylim=c(-0.01, 0.06), xlim=c(0, 0.1),      
+     xlab=expression(sigma[p]), ylab=expression(mu[p])) 
+# bootstrap estimates 
+points(sd.boot[, "A"], mu.boot[, "A"], pch=16, col="lightblue") 
+points(sd.boot[, "B"], mu.boot[, "B"], pch=16, col="grey")
+abline(h=0) 
+# sample estimates 
+points(sigmahat.vals, muhat.vals, pch=16, col="blue", cex=2) 
+text(x=sigmahat.vals[1], y=muhat.vals[1], labels="A Hat",       
+     col="blue", pos=4, cex = 1.5) 
+text(x=sigmahat.vals[2], y=muhat.vals[2], labels="B Hat",       
+     col="blue", pos=4, cex = 1.5)
+# Min and max Sharpe ratios 
+abline(a=r.f, b=SR.boot[maxSRidx.A, "A"], col="lightblue", lwd=2) 
+abline(a=r.f, b=SR.boot[minSRidx.A, "A"], col="lightblue", lwd=2) 
+abline(a=r.f, b=SR.boot[maxSRidx.B, "B"], col="grey", lwd=2) 
+abline(a=r.f, b=SR.boot[minSRidx.B, "B"], col="grey", lwd=2) 
+# Risk free rate 
+points(0, r.f, pch=16, col="green", cex=2) 
+text(0, r.f, labels=expression(r[f]), cex=1.5, pos=2)
+```
+
+* The maximum and minimum bootstrap Sharpe ratio estimates for asset B are the two grey straight lines from the risk-free rate that have the highest and lowest slopes, respectively. 
+* The maximum and minimum bootstrap Sharpe ratio estimates for asset A are the two light blue lines with the highest and lowest slopes, respectively.
+
+## Statistical properties of estimated Sharpe ratios
+
+The bootstrap estimates of bias are:
+
+```{r}
+# bias
+biasSR.boot = colMeans(SR.boot) - c(SR.true) 
+biasSR.boot 
+# bias relative to true values
+biasSR.boot/SR.true
+```
+
+* Here we see there is a substantial upward bias in $\widehat{\mathrm{SR}}_{A}$ and a substantial downward bias in $\widehat{\mathrm{SR}}_{B}$
+
+A crude bias adjusted Sharpe ratio estimate, which substracts the estimated bias from the sample estimate, gives results much closer to the true Sharpe ratios:
+
+```{r}
+SR.hat.biasAdjust = SR.hat - biasSR.boot 
+SR.hat.biasAdjust
+SR.true
+```
+
+The bootstrap estimated standard errors for both assets are big and indicate that the Sharpe ratios are not estimated well:
+
+```{r}
+apply(SR.boot, 2, sd)
+```
+
+## Bootstrap distribution of estimated Sharpe ratios
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))   
+  hist(SR.boot[, 1], main="Asset A", xlab="bootstrap estimates of SR", col="slateblue1")   
+  abline(v=SR.hat[1], col="white", lwd=2)   
+  hist(SR.boot[, 2], main="Asset B", xlab="bootstrap estimates of SR", col="slateblue1")   
+  abline(v=SR.hat[2], col="white", lwd=2)   
+  qqnorm(SR.boot[, 1])   
+  qqline(SR.boot[, 1])   
+  qqnorm(SR.boot[, 2])   
+  qqline(SR.boot[, 2]) 
+par(mfrow=c(1,1))
+```
+
+ 
+## Three asset example data
+
+Microsoft, Nordstrom and Starbucks monthly returns over the 5-year period January 1995 to December 1999.
+
+```{r}
+# get data and create monthly returns
+data(msftDailyPrices, jwnDailyPrices, sbuxDailyPrices)
+gwnDailyPrices = merge(msftDailyPrices, jwnDailyPrices, sbuxDailyPrices)
+gwnMonthlyPrices = to.monthly(gwnDailyPrices, OHLC = FALSE)
+gwnReturns = CalculateReturns(gwnMonthlyPrices)
+gwnReturns = gwnReturns["1995::1999"]
+colnames(gwnReturns)[2] = "NORD"
+```
+
+## Estimate GWN model parameters and calculate standard errors for means and volatilities
+
+```{r}
+# estimates
+mu.hat = colMeans(gwnReturns)
+sd.hat = apply(gwnReturns, 2, sd)
+cov.hat = cov(gwnReturns)
+cor.hat = cor(gwnReturns)
+# estimated SE values for means and volatilities
+n.obs = nrow(gwnReturns)
+se.mu.hat = sd.hat/sqrt(n.obs)
+se.sd.hat = sd.hat/sqrt(2*n.obs)
+```
+
+Estimates with standard errors
+
+```{r}
+# means with SE
+rbind(mu.hat, se.mu.hat)
+```
+
+* Means are not estimated precisely
+
+```{r}
+# volatilities with SE
+rbind(sd.hat, se.sd.hat)
+```
+
+* Volatilities are estimated more precisely
+
+
+## Risk return characteristics without estimation error
+
+```{r, echo=FALSE}
+# show risk return tradeoffs
+plot(sd.hat, mu.hat,  ylim=c(-0.03, 0.1), xlim=c(0, 0.20), ylab=expression(mu[p]),
+     xlab=expression(sigma[p]), pch=16, col="blue", cex=2.5, cex.lab=1.75)     
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex = cex.val)
+abline(h=0)
+
+```
+
+## Bootstrap means and volatilities to illustrate estimation error
+
+```{r}
+# re-sample means and sd values
+n.boot = 500
+mu.boot = matrix(0, n.boot, ncol(gwnReturns))
+sd.boot = matrix(0, n.boot, ncol(gwnReturns))
+colnames(mu.boot) = colnames(sd.boot) = colnames(gwnReturns)
+
+set.seed(123)
+for (i in 1:n.boot) {
+  boot.idx = sample(n.obs, replace=TRUE)
+  ret.boot = gwnReturns[boot.idx, ] 
+  mu.boot[i, ] = colMeans(ret.boot)
+  sd.boot[i, ] = apply(ret.boot, 2, sd) 
+}
+
+```
+
+## Risk return characteristics with estimation error
+
+```{r, echo=FALSE}
+plot(sd.boot[, "SBUX"], mu.boot[, "SBUX"], col="grey", pch=16,
+     ylim=c(-0.03, 0.10), xlim=c(0.0, 0.20),
+     ylab=expression(mu[p]),
+     xlab=expression(sigma[p]), cex.lab=1.5)
+points(sd.hat["SBUX"], mu.hat["SBUX"], pch=16, col="black", cex=2.5)
+abline(h=0)
+text(sd.hat["SBUX"], mu.hat["SBUX"], labels="SBUX", pos=4, cex = 2)
+# plot nordstrom
+points(sd.boot[, "NORD"], mu.boot[, "NORD"], col="lightblue", pch=16)
+points(sd.hat["NORD"], mu.hat["NORD"], pch=16, col="blue", cex=2.5)
+text(sd.hat["NORD"], mu.hat["NORD"], labels="NORD", pos=4, cex = 2)
+# plot microsoft
+points(sd.boot[, "MSFT"], mu.boot[, "MSFT"], col="pink", pch=16)
+points(sd.hat["MSFT"], mu.hat["MSFT"], pch=16, col="red", cex=2.5)
+text(sd.hat["MSFT"], mu.hat["MSFT"], labels="MSFT", pos=4, cex = 2)
+```
+
+* Sample estimates are big dark circles
+* Eootstrap estimates are small light circles
+* Estimation error is more prounounced in means than volatilities
+
+## Compute global minimum variance portfolio
+
+```{r}
+gmin.port = globalMin.portfolio(mu.hat, cov.hat)
+gmin.port
+```
+
+## Risk return characteristics without estimation error
+
+```{r, echo=FALSE}
+plot(sd.hat, mu.hat,  ylim=c(-0.03, 0.1), xlim=c(0, 0.20), ylab=expression(mu[p]),
+     xlab=expression(sigma[p]), pch=16, col="blue", cex=2.5, cex.lab=1.75)     
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex = cex.val)
+points(gmin.port$sd, gmin.port$er, pch=16, cex=2.5, col="green")
+text(gmin.port$sd, gmin.port$er, labels="Global Min", pos=2, cex = cex.val)
+abline(h=0)
+```
+
+## Bootstrap global minimum variance portfolio
+
+```{r}
+# bootstrap global min portfolio
+mu.gmin.boot = matrix(0, n.boot, 1)
+sd.gmin.boot = matrix(0, n.boot, 1)
+w.gmin.boot = matrix(0, n.boot, 3)
+colnames(mu.gmin.boot) = colnames(sd.gmin.boot) = "global.min"
+colnames(w.gmin.boot) = names(mu.hat)
+
+set.seed(123)
+for (i in 1:n.boot) {
+  boot.idx = sample(n.obs, replace=TRUE)
+  ret.boot = gwnReturns[boot.idx, ] 
+  mu.boot = colMeans(ret.boot)
+  cov.boot = cov(ret.boot) 
+  gmin.boot = globalMin.portfolio(mu.boot, cov.boot)
+  mu.gmin.boot[i, ] = gmin.boot$er
+  sd.gmin.boot[i, ] = gmin.boot$sd
+  w.gmin.boot[i, ] = gmin.boot$weights
+}
+
+```
+
+## Risk return characteristics without estimation error
+
+```{r, echo=FALSE}
+plot(sd.hat, mu.hat,  ylim=c(-0.03, 0.1), xlim=c(0, 0.20), ylab=expression(mu[p]),
+     xlab=expression(sigma[p]), pch=16, col="blue", cex=2.5, cex.lab=1.75)     
+abline(h=0, v=0)
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex = cex.val)
+# plot bootstrapped global min
+points(sd.gmin.boot, mu.gmin.boot, col="lightgreen", pch=16)
+points(gmin.port$sd, gmin.port$er, pch=16, cex=2.5, col="black")
+text(gmin.port$sd, gmin.port$er, labels="Global Min", pos=2, cex = cex.val)
+```
+
+* Estimation error is larger in mean than in volatility (cloud is more stretched in vertical direction)
+
+## Bootstrap distribution of global minimum variance portfolio mean and volatility 
+
+```{r, echo=FALSE}
+# look at bootstrap distribution
+par(mfrow=c(2,2))
+  hist(mu.gmin.boot, col="cornflowerblue")
+  qqnorm(mu.gmin.boot, col="cornflowerblue", pch=16)
+  qqline(mu.gmin.boot)
+
+  hist(sd.gmin.boot, col="cornflowerblue")
+  qqnorm(sd.gmin.boot, col="cornflowerblue", pch=16)
+  qqline(sd.gmin.boot)
+par(mfrow=c(1,1))
+```
+
+* Both distribution look pretty normal
+* histogram of mean is more spread out (0% - 7%) than histogram of volatility (5% - 9%)
+
+## Bootstrap bias, SE and 95% CI for mean
+
+```{r}
+bias.mu.gmin = mean(mu.gmin.boot) - gmin.port$er
+se.mu.gmin = sd(mu.gmin.boot)
+ci.mu.gmin.95 = c(gmin.port$er-2*se.mu.gmin, 
+                  gmin.port$er+2*se.mu.gmin)
+names(ci.mu.gmin.95) = c("lower", "upper")
+```
+
+Bootstrap estimate of bias for mean is small
+
+```{r}
+bias.mu.gmin
+```
+
+Bootstrap SE for mean is fairly big
+
+```{r}
+se.mu.gmin
+```
+
+Bootstrap 95% CI for mean is pretty wide
+
+```{r}
+ci.mu.gmin.95
+```
+
+## Bootstrap bias, SE and 95% CI for volatility
+
+```{r}
+bias.sd.gmin = mean(sd.gmin.boot) - gmin.port$sd
+se.sd.gmin = sd(sd.gmin.boot)
+ci.sd.gmin.95 = c(gmin.port$sd-2*se.sd.gmin, 
+                  gmin.port$sd+2*se.sd.gmin)
+names(ci.sd.gmin.95) = c("lower", "upper")
+```
+
+Bootstrap estimate of bias for volatility is small
+
+```{r}
+bias.sd.gmin
+```
+
+Bootstrap SE for volatility is fairly small
+
+```{r}
+se.sd.gmin
+```
+
+Bootstrap 95% CI for volatility is not so wide
+
+```{r}
+ci.sd.gmin.95
+```
+
+## Bootstrap weights in global minimum variance portfolio
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+  hist(w.gmin.boot[, "SBUX"], main="SBUX", xlab="Weight", col="cornflowerblue")
+  hist(w.gmin.boot[, "MSFT"], main="MSFT", xlab="Weight", col="cornflowerblue")
+  hist(w.gmin.boot[, "NORD"], main="NORD", xlab="Weight", col="cornflowerblue")
+  corrplot(cor(w.gmin.boot), method="ellipse")
+par(mfrow=c(1,1))
+```
+
+* histograms of weights are faily spread out
+* Weights are negatively correlated (because they sum to one)
+
+## Bootstrap bias, SE and 95% CI for weights
+
+```{r}
+bias.w.gmin = colMeans(w.gmin.boot) - gmin.port$weights
+se.w.gmin = apply(w.gmin.boot, 2, sd)
+ci.w.gmin.95 = rbind(gmin.port$weights-2*se.w.gmin, 
+                     gmin.port$weights+2*se.w.gmin)
+rownames(ci.w.gmin.95) = c("lower", "upper")
+```
+
+Bootstrap estimates of bias for weights are fairly small
+
+```{r}
+bias.w.gmin
+```
+
+Bootstrap SEs for weights are moderately large (9%)
+
+```{r}
+se.w.gmin
+```
+
+Bootstrap 95% CIs for weights are wide
+
+```{r}
+ci.w.gmin.95
+```
+
+
+## Bootstrap weights in global minimum variance portfolio
+
+```{r, echo=FALSE}
+# sort bootstrap values by mean
+tmp.w.boot = w.gmin.boot[1:20, ]
+tmp.mu.boot = mu.gmin.boot[1:20, ]
+tmp.sd.boot = sd.gmin.boot[1:20, ]
+sort.idx = order(tmp.mu.boot)
+
+# look at weights in stacked bar charts
+chart.StackedBar(tmp.w.boot[sort.idx,], 
+                 xaxis.labels=round(tmp.mu.boot[sort.idx],digits=3), 
+                 xlab="Portfolio SD", ylab="Weights", cex.lab=1.5,
+                 cex.axis=1.5)
+```
+
+* x-axis is bootstrap mean value of global minimum variance portfolio
+* weights vary a bit from portfolio to portfolio - SBUX always has the smallest weight
+
+## Efficient frontier of risky assets
+
+```{r}
+# compute efficient frontier
+ef = efficient.frontier(mu.hat, cov.hat)
+```
+
+```{r, echo=FALSE}
+# plot efficient portfolios
+plot(ef$sd, ef$er, type="b", ylim=c(-0.03, 0.1), xlim=c(0, 0.20), 
+     pch=16, col="blue", cex=2, ylab=expression(mu[p]), xlab=expression(sigma[p]))
+
+points(sd.hat, mu.hat, pch=16, cex=2, col="black")
+points(gmin.port$sd, gmin.port$er, pch=16, cex=2, col="green")
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex=2)
+text(gmin.port$sd, gmin.port$er, labels="Global min", pos=4, cex=2)
+```
+
+## Bootstrap efficient frontier
+
+```{r}
+ef.list = list()
+set.seed(123)
+for (i in 1:n.boot) {
+  boot.idx = sample(n.obs, replace=TRUE)
+  ret.boot = gwnReturns[boot.idx, ] 
+  mu.boot = colMeans(ret.boot)
+  cov.boot = cov(ret.boot) 
+  ef.boot = efficient.frontier(mu.boot, cov.boot)
+  ef.list[[i]] = ef.boot
+}
+
+```
+
+## Show bootstrap frontier portfolios
+
+```{r, echo=FALSE}
+plot(ef$sd, ef$er, type="n", ylim=c(-0.03, 0.1), xlim=c(0, 0.20), 
+     ylab=expression(mu[p]), xlab=expression(sigma[p]))
+# show bootstrap frontiers
+for (i in 1:n.boot) {
+  points(ef.list[[i]]$sd, ef.list[[i]]$er, type="b",
+         pch=16, col="grey", cex=1.5)
+}
+# show sample frontier and assets
+points(ef$sd, ef$er, type="b", pch=16, col="blue", cex=2)
+points(sd.hat, mu.hat, pch=16, cex=2, col="black")
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex=2)
+
+```
+
+## A prettier picture with 20 portfolios
+
+```{r, echo=FALSE}
+plot(ef$sd, ef$er, type="n", ylim=c(-0.03, 0.1), xlim=c(0, 0.20), 
+     ylab=expression(mu[p]), xlab=expression(sigma[p]))
+# show bootstrap frontiers
+for (i in 1:20) {
+  points(ef.list[[i]]$sd, ef.list[[i]]$er, type="b",
+         pch=16, col=i, cex=1)
+}
+# show sample frontier and assets
+points(ef$sd, ef$er, type="b", pch=16, col="blue", cex=2)
+points(sd.hat, mu.hat, pch=16, cex=2, col="black")
+text(sd.hat, mu.hat, labels=names(mu.hat), pos=4, cex=2)
+
+```
